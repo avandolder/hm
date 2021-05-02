@@ -1,8 +1,8 @@
 import scala.collection.mutable
-import scala.util.parsing.combinator._
+import scala.util.parsing.combinator.*
 
-import Expr._
-import Typ._
+import Expr.*
+import Typ.*
 
 @main def main() =
   val src = raw"""
@@ -16,8 +16,8 @@ import Typ._
   """
   val expr = Parser.parseAll(Parser.program, src) match
     case Parser.Success(matched, _) => matched
-    case Parser.Failure(msg, _) => throw Exception(s"Failure: $msg")
-    case Parser.Error(msg, _) => throw Exception(s"Failure: $msg")
+    case Parser.Failure(msg, _)     => throw Exception(s"Failure: $msg")
+    case Parser.Error(msg, _)       => throw Exception(s"Failure: $msg")
   println(expr.typecheck.pretty())
 
 enum Expr:
@@ -30,11 +30,11 @@ enum Expr:
   case EIf(e1: Expr, e2: Expr, e3: Expr)
 
   override def toString() = this match
-    case EBool(b) => b.toString
-    case EInt(n) => n.toString
-    case EApp(e1, e2) => s"($e1 $e2)"
-    case ELam(v, e) => s"(\\$v. $e)"
-    case EVar(v) => v
+    case EBool(b)        => b.toString
+    case EInt(n)         => n.toString
+    case EApp(e1, e2)    => s"($e1 $e2)"
+    case ELam(v, e)      => s"(\\$v. $e)"
+    case EVar(v)         => v
     case ELet(v, e1, e2) => s"let $v = $e1 in $e2"
     case EIf(e1, e2, e3) => s"if $e1 then $e2 else $e3"
 
@@ -47,9 +47,9 @@ enum Typ:
   case TVar(n: Int)
 
   override def toString() = this match
-    case TCon("->", Seq(t1, t2)) => s"($t1 -> $t2)"
-    case TCon(name, ts) if ts.nonEmpty => s"$name ${ts.mkString(" ")}"
-    case TCon(name, _) => name
+    case TCon("->", Seq(t1, t2))       => s"($t1 -> $t2)"
+    case TCon(name, ts) if ts.nonEmpty => s"($name ${ts.mkString(" ")})"
+    case TCon(name, _)                 => name
     case TVar(n) =>
       val primes = n / 26
       val char = (n % 26 + 'a').toChar
@@ -72,17 +72,17 @@ enum Typ:
     case TVar(_) => this.toString
 
   def mapVars(m: Map[Int, Int]): Typ = this match
-    case TVar(v) => TVar(m(v))
+    case TVar(v)        => TVar(m(v))
     case TCon(name, ts) => TCon(name, ts.map(_.mapVars(m)))
 
   def simplifyVars: Typ = mapVars(getVars.zipWithIndex.toMap)
 
   def getVars: Set[Int] = this match
-    case TVar(v) => Set(v)
+    case TVar(v)     => Set(v)
     case TCon(_, ts) => ts.toSet.flatMap(_.getVars)
 
   def occurs(v: Int): Boolean = this match
-    case TVar(v2) => v == v2
+    case TVar(v2)    => v == v2
     case TCon(_, ts) => ts.exists(_.occurs(v))
 
   def ->:(t: Typ) = TCon("->", Seq(t, this))
@@ -94,8 +94,7 @@ case class Scheme(val vs: Set[Int], val t: Typ):
   override def toString() =
     if vs.nonEmpty then
       s"forall ${vs.map(TVar(_)).mkString(" ")}. ${t.pretty()}"
-    else
-      s"$t"
+    else s"$t"
 
 final class Infer:
   private val s: mutable.Map[Int, Typ] = mutable.Map()
@@ -112,10 +111,10 @@ final class Infer:
 
   def monomorphize(t: Typ): Typ = t match
     case TVar(v) if g contains v => freshenVars(g(v).t)
-    case _ => t
+    case _                       => t
 
   def normalize(t: Typ): Typ = t match
-    case TCon(name, ts) => TCon(name, ts.map(normalize(_)))
+    case TCon(name, ts)          => TCon(name, ts.map(normalize(_)))
     case TVar(v) if g contains v => t
     case TVar(v) if s contains v =>
       s(v) = normalize(s(v))
@@ -126,18 +125,20 @@ final class Infer:
     s.put(v, t).foreach(unify(_, t))
 
   def unify(t1: Typ, t2: Typ): Unit = (t1, t2) match
-    case (TCon(n1, ts1), TCon(n2, ts2)) if n1 == n2 => ts1.zip(ts2).foreach(unify(_, _))
-    case (TVar(v1), TVar(v2)) if v1 == v2 => ()
+    case (TCon(n1, ts1), TCon(n2, ts2))
+        if n1 == n2 && ts1.length == ts2.length =>
+      ts1.zip(ts2).foreach(unify(_, _))
+    case (TVar(v1), TVar(v2)) if v1 == v2  => ()
     case (tv @ TVar(v), t) if g contains v => unify(monomorphize(tv), t)
     case (t, tv @ TVar(v)) if g contains v => unify(monomorphize(tv), t)
-    case (TVar(v), t) if !t.occurs(v) => updateVar(v, t)
-    case (t, TVar(v)) if !t.occurs(v) => updateVar(v, t)
-    case (t1, t2) => throw Exception(s"unification failure: $t1 with $t2")
+    case (TVar(v), t) if !t.occurs(v)      => updateVar(v, t)
+    case (t, TVar(v)) if !t.occurs(v)      => updateVar(v, t)
+    case (t1, t2)                          => throw Exception(s"unification failure: $t1 with $t2")
 
   def typecheck(e: Expr, ctx: Map[String, Typ]): Typ = e match
     case EBool(_) => BoolCon
-    case EInt(_) => IntCon
-    case EVar(v) => ctx(v)
+    case EInt(_)  => IntCon
+    case EVar(v)  => ctx(v)
 
     case EApp(e1, e2) =>
       val t1 = typecheck(e1, ctx)
@@ -160,8 +161,7 @@ final class Infer:
           g(tv.n) = Scheme(vs, t1)
           s(tv.n) = t1
           tv
-        else
-          t1
+        else t1
       normalize(typecheck(e2, ctx + (v -> t2)))
 
     case EIf(e1, e2, e3) =>
@@ -178,21 +178,21 @@ object Parser extends RegexParsers, PackratParsers:
 
   lazy val id: PackratParser[String] =
     not("let" | "in" | "if" | "then" | "else" | "true" | "false") ~>
-    raw"[a-zA-Z][\w']*".r ^^ { _.toString }
+      raw"[a-zA-Z][\w']*".r ^^ { _.toString }
   lazy val atomexpr: PackratParser[Expr] = (
     raw"[\d]+".r ^^ { x => EInt(x.toInt) }
-    | raw"true|false".r ^^ { x => EBool(x.toBoolean) }
-    | ("let" ~> id <~ "=") ~ expr ~ ("in" ~> expr) ^^ {
-        case id ~ e1 ~ e2 => ELet(id, e1, e2)
+      | raw"true|false".r ^^ { x => EBool(x.toBoolean) }
+      | ("let" ~> id <~ "=") ~ expr ~ ("in" ~> expr) ^^ { case id ~ e1 ~ e2 =>
+        ELet(id, e1, e2)
       }
-    | ("if" ~> expr <~ "then") ~ expr ~ ("else" ~> expr) ^^ {
+      | ("if" ~> expr <~ "then") ~ expr ~ ("else" ~> expr) ^^ {
         case e1 ~ e2 ~ e3 => EIf(e1, e2, e3)
       }
-    | ("\\" ~> id <~ ".") ~ expr ^^ {
-        case id ~ e => ELam(id, e)
+      | ("\\" ~> id <~ ".") ~ expr ^^ { case id ~ e =>
+        ELam(id, e)
       }
-    | id ^^ { EVar(_) }
-    | "(" ~> expr <~ ")"
+      | id ^^ { EVar(_) }
+      | "(" ~> expr <~ ")"
   )
   lazy val expr: PackratParser[Expr] =
     expr ~ atomexpr ^^ { case e1 ~ e2 => EApp(e1, e2) } | atomexpr
