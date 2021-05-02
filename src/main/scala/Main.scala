@@ -85,6 +85,8 @@ enum Typ:
     case TVar(v2) => v == v2
     case TCon(_, ts) => ts.exists(_.occurs(v))
 
+  def ->:(t: Typ) = TCon("->", Seq(t, this))
+
 val BoolCon = TCon("Bool", Seq.empty)
 val IntCon = TCon("Int", Seq.empty)
 
@@ -141,13 +143,13 @@ final class Infer:
       val t1 = typecheck(e1, ctx)
       val t2 = typecheck(e2, ctx)
       val t3 = freshVar
-      unify(t1, TCon("->", Seq(t2, t3)))
+      unify(t1, t2 ->: t3)
       normalize(t3)
 
     case ELam(v, e) =>
       val t1 = freshVar
       val t2 = typecheck(e, ctx + (v -> t1))
-      normalize(TCon("->", Seq(t1, t2)))
+      normalize(t1 ->: t2)
 
     case ELet(v, e1, e2) =>
       val t1 = typecheck(e1, ctx)
