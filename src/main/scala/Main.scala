@@ -43,44 +43,42 @@ enum Expr:
     infer.monomorphize(infer.typecheck(this, Map())).simplifyVars
 
 enum Typ:
-  case TInt
-  case TBool
-  case TArr(t1: Typ, t2: Typ)
+  case TCon(name: String, ts: Seq[Typ])
   case TVar(n: Int)
 
   override def toString() = this match
-    case TInt => "int"
-    case TBool => "bool"
-    case TArr(t1, t2) => s"($t1 -> $t2)"
+    case TCon("->", Seq(t1, t2)) => s"($t1 -> $t2)"
+    case TCon(name, ts) if ts.nonEmpty => s"$name ${ts.mkString(" ")}"
+    case TCon(name, _) => name
     case TVar(n) =>
       val primes = n / 26
       val char = (n % 26 + 'a').toChar
       s"?$char${"'" * primes}"
 
   def pretty(goingLeft: Boolean = false): String = this match
-    case TInt | TBool | TVar(_) => this.toString
-    case TArr(t1, t2) =>
+    case TCon("->", Seq(t1, t2)) =>
       if goingLeft then
         s"(${t1.pretty(true)} -> ${t2.pretty(false)})"
       else
         s"${t1.pretty(true)} -> ${t2.pretty(false)}"
+    case TCon(_, _) | TVar(_) => this.toString
 
   def mapVars(m: Map[Int, Int]): Typ = this match
-    case TInt | TBool => this
     case TVar(v) => TVar(m(v))
-    case TArr(t1, t2) => TArr(t1.mapVars(m), t2.mapVars(m))
+    case TCon(name, ts) => TCon(name, ts.map(_.mapVars(m)))
 
   def simplifyVars: Typ = mapVars(getVars.zipWithIndex.toMap)
 
   def getVars: Set[Int] = this match
-    case TInt | TBool => Set()
     case TVar(v) => Set(v)
-    case TArr(t1, t2) => t1.getVars ++ t2.getVars
+    case TCon(_, ts) => ts.toSet.flatMap(_.getVars)
 
   def occurs(v: Int): Boolean = this match
-    case TInt | TBool => false
     case TVar(v2) => v == v2
-    case TArr(t1, t2) => t1.occurs(v) || t2.occurs(v)
+    case TCon(_, ts) => ts.exists(_.occurs(v))
+
+val BoolCon = TCon("bool", Seq.empty)
+val IntCon = TCon("int", Seq.empty)
 
 case class Scheme(val vs: Set[Int], val t: Typ):
   override def toString() =
@@ -107,40 +105,38 @@ final class Infer:
     case _ => t
 
   def normalize(t: Typ): Typ = t match
-    case TInt | TBool => t
+    case TCon(name, ts) => TCon(name, ts.map(normalize(_)))
     case TVar(v) if g contains v => t
     case TVar(v) if s contains v =>
       s(v) = normalize(s(v))
       s(v)
     case TVar(_) => t
-    case TArr(t1, t2) => TArr(normalize(t1), normalize(t2))
 
   def updateVar(v: Int, t: Typ) =
     s.put(v, t).foreach(unify(_, t))
 
   def unify(t1: Typ, t2: Typ): Unit = (t1, t2) match
-    case (TInt, TInt) | (TBool, TBool) => ()
+    case (TCon(n1, ts1), TCon(n2, ts2)) if n1 == n2 => ts1.zip(ts2).foreach(unify(_, _))
     case (TVar(v1), TVar(v2)) if v1 == v2 => ()
     case (tv @ TVar(v), t) if g contains v => unify(monomorphize(tv), t)
     case (t, tv @ TVar(v)) if g contains v => unify(monomorphize(tv), t)
     case (TVar(v), t) if !t.occurs(v) => updateVar(v, t)
     case (t, TVar(v)) if !t.occurs(v) => updateVar(v, t)
-    case (TArr(l1, r1), TArr(l2, r2)) => unify(l1, l2); unify(r1, r2)
     case (t1, t2) => throw Exception(s"unification failure: $t1 with $t2")
 
   def typecheck(e: Expr, ctx: Map[String, Typ]): Typ = e match
-    case EBool(_) => TBool
-    case EInt(_) => TInt
+    case EBool(_) => BoolCon
+    case EInt(_) => IntCon
     case EApp(e1, e2) =>
       val t1 = typecheck(e1, ctx)
       val t2 = typecheck(e2, ctx)
       val t3 = freshVar
-      unify(t1, TArr(t2, t3))
+      unify(t1, TCon("->", Seq(t2, t3)))
       normalize(t3)
     case ELam(v, e) =>
       val t1 = freshVar
       val t2 = typecheck(e, ctx + (v -> t1))
-      normalize(TArr(t1, t2))
+      normalize(TCon("->", Seq(t1, t2)))
     case EVar(v) => ctx(v)
     case ELet(v, e1, e2) =>
       val t1 = typecheck(e1, ctx)
@@ -160,7 +156,7 @@ final class Infer:
       val t1 = typecheck(e1, ctx)
       val t2 = typecheck(e2, ctx)
       val t3 = typecheck(e3, ctx)
-      unify(t1, TBool)
+      unify(t1, BoolCon)
       unify(t2, t3)
       normalize(t2)
 
