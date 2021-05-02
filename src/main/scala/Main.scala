@@ -55,27 +55,21 @@ enum Typ:
       val char = (n % 26 + 'a').toChar
       s"?$char${"'" * primes}"
 
-  def pretty(nested: Boolean = false): String = this match
-    case TCon("->", Seq(t1 @ TCon("->", _), t2)) if nested =>
-      s"(${t1.pretty(true)} -> ${t2.pretty(false)})"
+  def pretty(open: String = "", close: String = ""): String = this match
     case TCon("->", Seq(t1 @ TCon("->", _), t2)) =>
-      s"${t1.pretty(true)} -> ${t2.pretty(false)}"
-    case TCon("->", ts) if nested =>
-      ts.map(_.pretty(false)).mkString("(", " -> ", ")")
+      s"$open${t1.pretty("(", ")")} -> ${t2.pretty()}$close"
     case TCon("->", ts) =>
-      ts.map(_.pretty(false)).mkString(" -> ")
-    case TCon(name, ts) if ts.isEmpty => name
-    case TCon(name, ts) if nested =>
-      s"($name ${ts.map(_.pretty(true)).mkString(" ")})"
+      ts.map(_.pretty()).mkString(open, " -> ", close)
     case TCon(name, ts) =>
-      s"$name ${ts.map(_.pretty(true)).mkString(" ")}"
-    case TVar(_) => this.toString
+      if ts.isEmpty then name
+      else s"$open$name ${ts.map(_.pretty("(", ")")).mkString(" ")}$close"
+    case TVar(_) => s"$this"
 
   def mapVars(m: Map[Int, Int]): Typ = this match
     case TVar(v)        => TVar(m(v))
     case TCon(name, ts) => TCon(name, ts.map(_.mapVars(m)))
 
-  def simplifyVars: Typ = mapVars(getVars.zipWithIndex.toMap)
+  def simplifyVars = mapVars(getVars.zipWithIndex.toMap)
 
   def getVars: Set[Int] = this match
     case TVar(v)     => Set(v)
@@ -138,14 +132,12 @@ final class Infer:
   def typecheck(e: Expr, ctx: Map[String, Typ]): Typ = e match
     case EBool(_) => BoolCon
     case EInt(_)  => IntCon
-    case EVar(v)  => ctx(v)
+    case EVar(v)  => normalize(ctx(v))
 
     case EApp(e1, e2) =>
-      val t1 = typecheck(e1, ctx)
-      val t2 = typecheck(e2, ctx)
-      val t3 = freshVar
-      unify(t1, t2 ->: t3)
-      normalize(t3)
+      val tv = freshVar
+      unify(typecheck(e1, ctx), typecheck(e2, ctx) ->: tv)
+      normalize(tv)
 
     case ELam(v, e) =>
       val t1 = freshVar
@@ -165,12 +157,10 @@ final class Infer:
       normalize(typecheck(e2, ctx + (v -> t2)))
 
     case EIf(e1, e2, e3) =>
-      val t1 = typecheck(e1, ctx)
-      val t2 = typecheck(e2, ctx)
-      val t3 = typecheck(e3, ctx)
-      unify(t1, BoolCon)
-      unify(t2, t3)
-      normalize(t2)
+      unify(typecheck(e1, ctx), BoolCon)
+      val t = typecheck(e2, ctx)
+      unify(t, typecheck(e3, ctx))
+      normalize(t)
 
 object Parser extends RegexParsers, PackratParsers:
   override def skipWhitespace = true
