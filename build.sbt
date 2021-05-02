@@ -2,6 +2,9 @@ val scala3Version = "3.0.0-RC3"
 
 libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.2.0-RC2"
 
+scalacOptions += "-Yexplicit-nulls"
+scalacOptions += "-Ysafe-init"
+
 lazy val root = project
   .in(file("."))
   .settings(
