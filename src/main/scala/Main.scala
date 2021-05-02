@@ -55,13 +55,21 @@ enum Typ:
       val char = (n % 26 + 'a').toChar
       s"?$char${"'" * primes}"
 
-  def pretty(goingLeft: Boolean = false): String = this match
-    case TCon("->", Seq(t1, t2)) =>
-      if goingLeft then
-        s"(${t1.pretty(true)} -> ${t2.pretty(false)})"
-      else
-        s"${t1.pretty(true)} -> ${t2.pretty(false)}"
-    case TCon(_, _) | TVar(_) => this.toString
+  def pretty(nested: Boolean = false): String = this match
+    case TCon("->", Seq(t1 @ TCon("->", _), t2)) if nested =>
+      s"(${t1.pretty(true)} -> ${t2.pretty(false)})"
+    case TCon("->", Seq(t1 @ TCon("->", _), t2)) =>
+      s"${t1.pretty(true)} -> ${t2.pretty(false)}"
+    case TCon("->", ts) if nested =>
+      ts.map(_.pretty(false)).mkString("(", " -> ", ")")
+    case TCon("->", ts) =>
+      ts.map(_.pretty(false)).mkString(" -> ")
+    case TCon(name, ts) if ts.isEmpty => name
+    case TCon(name, ts) if nested =>
+      s"($name ${ts.map(_.pretty(true)).mkString(" ")})"
+    case TCon(name, ts) =>
+      s"$name ${ts.map(_.pretty(true)).mkString(" ")}"
+    case TVar(_) => this.toString
 
   def mapVars(m: Map[Int, Int]): Typ = this match
     case TVar(v) => TVar(m(v))
@@ -77,8 +85,8 @@ enum Typ:
     case TVar(v2) => v == v2
     case TCon(_, ts) => ts.exists(_.occurs(v))
 
-val BoolCon = TCon("bool", Seq.empty)
-val IntCon = TCon("int", Seq.empty)
+val BoolCon = TCon("Bool", Seq.empty)
+val IntCon = TCon("Int", Seq.empty)
 
 case class Scheme(val vs: Set[Int], val t: Typ):
   override def toString() =
@@ -127,17 +135,20 @@ final class Infer:
   def typecheck(e: Expr, ctx: Map[String, Typ]): Typ = e match
     case EBool(_) => BoolCon
     case EInt(_) => IntCon
+    case EVar(v) => ctx(v)
+
     case EApp(e1, e2) =>
       val t1 = typecheck(e1, ctx)
       val t2 = typecheck(e2, ctx)
       val t3 = freshVar
       unify(t1, TCon("->", Seq(t2, t3)))
       normalize(t3)
+
     case ELam(v, e) =>
       val t1 = freshVar
       val t2 = typecheck(e, ctx + (v -> t1))
       normalize(TCon("->", Seq(t1, t2)))
-    case EVar(v) => ctx(v)
+
     case ELet(v, e1, e2) =>
       val t1 = typecheck(e1, ctx)
       val vs = t1.getVars
@@ -149,7 +160,6 @@ final class Infer:
           tv
         else
           t1
-
       normalize(typecheck(e2, ctx + (v -> t2)))
 
     case EIf(e1, e2, e3) =>
