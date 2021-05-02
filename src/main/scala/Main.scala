@@ -3,17 +3,19 @@ import scala.util.parsing.combinator._
 
 @main def main() =
   val src = raw"""
-    let x = \y. if y then 0 else 1 in
+    let x = \y.\z. if y then z else z in
     let z = false in
-    x z
-  """
+    let f = \a.\b.\c.a b c in
+    let id = \x. x in
+    f id x z
+  """.linesIterator.map(_.stripLeading).mkString("\n")
   val expr = Parser.parseAll(Parser.program, src) match
     case Parser.Success(matched, _) => matched
     case Parser.Failure(msg, _) => throw Exception(s"Failure: $msg")
     case Parser.Error(msg, _) => throw Exception(s"Failure: $msg")
+  println(src)
   println(expr)
-  val t = expr.typecheck
-  println(t.simplifyVars)
+  println(expr.typecheck.simplifyVars)
 
 enum Expr:
   case EBool(b: Boolean)
@@ -47,19 +49,19 @@ enum Typ:
   override def toString() = this match
     case TInt => "int"
     case TBool => "bool"
-    case TArr(t1: Typ, t2: Typ) => s"$t1 -> $t2"
+    case TArr(t1: Typ, t2: Typ) => s"($t1 -> $t2)"
     case TVar(n: Int) =>
       val primes = n / 26
       val char = (n % 26 + 'a').toChar
       s"?$char${"'" * primes}"
 
   def simplifyVars: Typ =
-    def simplify(t: Typ, m: Map[Int, Int]): Typ = t match
+    val m = getVars.zipWithIndex.toMap
+    def simplify(t: Typ): Typ = t match
       case TInt | TBool => t
       case TVar(v) => TVar(m(v))
-      case TArr(t1, t2) => TArr(simplify(t1, m), simplify(t2, m))
-    val m = this.getVars.zipWithIndex.toMap
-    simplify(this, m)
+      case TArr(t1, t2) => TArr(simplify(t1), simplify(t2))
+    simplify(this)
 
   def getVars: Set[Int] = this match
     case TInt | TBool => Set()
