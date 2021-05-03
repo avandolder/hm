@@ -20,6 +20,14 @@ import Typ.*
     case Parser.Error(msg, _)       => throw Exception(s"Failure: $msg")
   println(expr.typecheck.pretty())
 
+val boolCon = TCon("Bool", Seq.empty)
+val intCon = TCon("Int", Seq.empty)
+val prelude = Map(
+  "is_zero" -> (intCon ->: boolCon),
+  "pred" -> (intCon ->: intCon),
+  "mult" -> (intCon ->: intCon ->: intCon)
+)
+
 enum Expr:
   case EBool(b: Boolean)
   case EInt(n: Int)
@@ -27,6 +35,7 @@ enum Expr:
   case ELam(v: String, e: Expr)
   case EVar(v: String)
   case ELet(v: String, e1: Expr, e2: Expr)
+  case ERec(v: String, e1: Expr, e2: Expr)
   case EIf(e1: Expr, e2: Expr, e3: Expr)
 
   override def toString() = this match
@@ -36,11 +45,12 @@ enum Expr:
     case ELam(v, e)      => s"(\\$v. $e)"
     case EVar(v)         => v
     case ELet(v, e1, e2) => s"let $v = $e1 in $e2"
+    case ERec(v, e1, e2) => s"rec $v = $e1 in $e2"
     case EIf(e1, e2, e3) => s"if $e1 then $e2 else $e3"
 
   def typecheck: Typ =
     val infer = Infer()
-    infer.monomorphize(infer.typecheck(this, Map())).simplifyVars
+    infer.monomorphize(infer.typecheck(this, prelude)).simplifyVars
 
 enum Typ:
   case TCon(name: String, ts: Seq[Typ])
@@ -80,9 +90,6 @@ enum Typ:
     case TCon(_, ts) => ts.exists(_.occurs(v))
 
   def ->:(t: Typ) = TCon("->", Seq(t, this))
-
-val BoolCon = TCon("Bool", Seq.empty)
-val IntCon = TCon("Int", Seq.empty)
 
 case class Scheme(val vs: Set[Int], val t: Typ):
   override def toString() =
@@ -129,9 +136,18 @@ final class Infer:
     case (t, TVar(v)) if !t.occurs(v)      => updateVar(v, t)
     case (t1, t2)                          => throw Exception(s"unification failure: $t1 with $t2")
 
+  def polymorphize(t: Typ) =
+    val vs = t.getVars
+    if vs.isEmpty then t
+    else
+      val tv = freshVar
+      g(tv.n) = Scheme(vs, t)
+      s(tv.n) = t
+      tv
+
   def typecheck(e: Expr, ctx: Map[String, Typ]): Typ = e match
-    case EBool(_) => BoolCon
-    case EInt(_)  => IntCon
+    case EBool(_) => boolCon
+    case EInt(_)  => intCon
     case EVar(v)  => normalize(ctx(v))
 
     case EApp(e1, e2) =>
@@ -145,19 +161,18 @@ final class Infer:
       normalize(t1 ->: t2)
 
     case ELet(v, e1, e2) =>
-      val t1 = typecheck(e1, ctx)
-      val vs = t1.getVars
-      val t2 =
-        if vs.nonEmpty then
-          val tv = freshVar
-          g(tv.n) = Scheme(vs, t1)
-          s(tv.n) = t1
-          tv
-        else t1
+      val t = polymorphize(typecheck(e1, ctx))
+      normalize(typecheck(e2, ctx + (v -> t)))
+
+    case ERec(v, e1, e2) =>
+      val recv = freshVar
+      val t1 = typecheck(e1, ctx + (v -> recv))
+      unify(t1, recv)
+      val t2 = polymorphize(t1)
       normalize(typecheck(e2, ctx + (v -> t2)))
 
     case EIf(e1, e2, e3) =>
-      unify(typecheck(e1, ctx), BoolCon)
+      unify(typecheck(e1, ctx), boolCon)
       val t = typecheck(e2, ctx)
       unify(t, typecheck(e3, ctx))
       normalize(t)
@@ -167,13 +182,16 @@ object Parser extends RegexParsers, PackratParsers:
   override val whiteSpace = "[ \t\n\r]+".r
 
   lazy val id: PackratParser[String] =
-    not("let" | "in" | "if" | "then" | "else" | "true" | "false") ~>
+    not("let" | "rec" | "in" | "if" | "then" | "else" | "true" | "false") ~>
       raw"[a-zA-Z][\w']*".r ^^ { _.toString }
   lazy val atomexpr: PackratParser[Expr] = (
     raw"[\d]+".r ^^ { x => EInt(x.toInt) }
       | raw"true|false".r ^^ { x => EBool(x.toBoolean) }
       | ("let" ~> id <~ "=") ~ expr ~ ("in" ~> expr) ^^ { case id ~ e1 ~ e2 =>
         ELet(id, e1, e2)
+      }
+      | ("rec" ~> id <~ "=") ~ expr ~ ("in" ~> expr) ^^ { case id ~ e1 ~ e2 =>
+        ERec(id, e1, e2)
       }
       | ("if" ~> expr <~ "then") ~ expr ~ ("else" ~> expr) ^^ {
         case e1 ~ e2 ~ e3 => EIf(e1, e2, e3)
