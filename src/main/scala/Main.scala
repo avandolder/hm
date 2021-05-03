@@ -24,30 +24,22 @@ import Value.*
 
 val boolCon = TCon("Bool", Seq.empty)
 val intCon = TCon("Int", Seq.empty)
-val preludeTypes = Map(
-  "is_zero" -> (intCon ->: boolCon),
-  "pred" -> (intCon ->: intCon),
-  "mult" -> (intCon ->: intCon ->: intCon)
-)
-val preludeValues = Map(
-  "is_zero" -> VNative({
+val prelude = Map(
+  "is_zero" -> VNative(intCon ->: boolCon, {
     case VInt(n) => VBool(n == 0)
     case v       => throw TypeError("Expected Int, got $v")
   }),
-  "pred" -> VNative({
+  "pred" -> VNative(intCon ->: intCon, {
     case VInt(n) => VInt(n - 1)
     case v       => throw TypeError("Expected Int, got $v")
   }),
-  "mult" -> VNative(x =>
-    x match
-      case VInt(x) =>
-        VNative(y =>
-          y match
-            case VInt(y) => VInt(x * y)
-            case v       => throw TypeError("Expected Int, got $v")
-        )
-      case v => throw TypeError("Expected Int, got $v")
-  )
+  "mult" -> VNative(intCon ->: intCon ->: intCon, {
+    case VInt(x) => VNative(intCon ->: intCon, {
+        case VInt(y) => VInt(x * y)
+        case v       => throw TypeError("Expected Int, got $v")
+      })
+    case v => throw TypeError("Expected Int, got $v")
+  })
 )
 
 enum Expr:
@@ -72,9 +64,10 @@ enum Expr:
 
   def typecheck: Typ =
     val infer = Infer()
-    infer.monomorphize(infer.typecheck(this, preludeTypes)).simplifyVars
+    val t = infer.typecheck(this, prelude.map(_ -> _.getType))
+    infer.monomorphize(t).simplifyVars
 
-  def eval(ctx: Map[String, Value] = preludeValues): Value = this match
+  def eval(ctx: Map[String, Value] = prelude): Value = this match
     case EBool(b)   => VBool(b)
     case EInt(n)    => VInt(n)
     case EVar(v)    => ctx(v)
@@ -90,7 +83,7 @@ enum Expr:
       e2.eval(ctx + (id -> v))
 
     case ERec(id, e1, e2) =>
-      val v = e1.eval(ctx + (id -> VUndef))
+      val v = e1.eval(ctx)
       e2.eval(ctx + (id -> v.updateCtx(id, v)))
 
     case EIf(e1, e2, e3) =>
@@ -257,14 +250,13 @@ final class TypeError(msg: String) extends Exception(msg)
 
 enum Value:
   case VLam(var ctx: Map[String, Value], param: String, body: Expr)
-  case VNative(body: Value => Value)
+  case VNative(t: Typ, f: Value => Value)
   case VInt(n: Int)
   case VBool(b: Boolean)
-  case VUndef
 
   def apply(that: Value) = this match
     case VLam(ctx, param, body) => body.eval(ctx + (param -> that))
-    case VNative(body)          => body(that)
+    case VNative(_, f)          => f(that)
     case _                      => throw TypeError(s"Expected applicable, got $this")
 
   def updateCtx(k: String, v: Value): Value = this match
@@ -275,7 +267,14 @@ enum Value:
 
   override def toString = this match
     case VLam(_, _, _) => "[lambda]"
-    case VNative(_)    => "[native function]"
+    case VNative(_, _) => "[native function]"
     case VInt(n)       => s"$n"
     case VBool(b)      => s"$b"
-    case VUndef        => "[undefined]"
+
+  def getType: Typ = this match
+    case VBool(_)      => boolCon
+    case VInt(_)       => intCon
+    case VNative(t, _) => t
+    case VLam(ctx, id, e) =>
+      val infer = Infer()
+      infer.typecheck(ELam(id, e), ctx.map(_ -> _.getType)).simplifyVars
