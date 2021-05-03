@@ -3,6 +3,7 @@ import scala.util.parsing.combinator.*
 
 import Expr.*
 import Typ.*
+import Value.*
 
 @main def main() =
   val src = raw"""
@@ -18,14 +19,35 @@ import Typ.*
     case Parser.Success(matched, _) => matched
     case Parser.Failure(msg, _)     => throw Exception(s"Failure: $msg")
     case Parser.Error(msg, _)       => throw Exception(s"Failure: $msg")
-  println(expr.typecheck.pretty())
+  println(s"type: ${expr.typecheck.pretty()}")
+  println(s"value: ${expr.eval()}")
 
 val boolCon = TCon("Bool", Seq.empty)
 val intCon = TCon("Int", Seq.empty)
-val prelude = Map(
+val preludeTypes = Map(
   "is_zero" -> (intCon ->: boolCon),
   "pred" -> (intCon ->: intCon),
   "mult" -> (intCon ->: intCon ->: intCon)
+)
+val preludeValues = Map(
+  "is_zero" -> VNative({
+    case VInt(n) => VBool(n == 0)
+    case v       => throw TypeError("Expected Int, got $v")
+  }),
+  "pred" -> VNative({
+    case VInt(n) => VInt(n - 1)
+    case v       => throw TypeError("Expected Int, got $v")
+  }),
+  "mult" -> VNative(x =>
+    x match
+      case VInt(x) =>
+        VNative(y =>
+          y match
+            case VInt(y) => VInt(x * y)
+            case v       => throw TypeError("Expected Int, got $v")
+        )
+      case v => throw TypeError("Expected Int, got $v")
+  )
 )
 
 enum Expr:
@@ -50,7 +72,32 @@ enum Expr:
 
   def typecheck: Typ =
     val infer = Infer()
-    infer.monomorphize(infer.typecheck(this, prelude)).simplifyVars
+    infer.monomorphize(infer.typecheck(this, preludeTypes)).simplifyVars
+
+  def eval(ctx: Map[String, Value] = preludeValues): Value = this match
+    case EBool(b)   => VBool(b)
+    case EInt(n)    => VInt(n)
+    case EVar(v)    => ctx(v)
+    case ELam(v, e) => VLam(ctx, v, e)
+
+    case EApp(e1, e2) =>
+      val v1 = e1.eval(ctx)
+      val v2 = e2.eval(ctx)
+      v1(v2)
+
+    case ELet(id, e1, e2) =>
+      val v = e1.eval(ctx)
+      e2.eval(ctx + (id -> v))
+
+    case ERec(id, e1, e2) =>
+      val v = e1.eval(ctx + (id -> VUndef))
+      e2.eval(ctx + (id -> v.updateCtx(id, v)))
+
+    case EIf(e1, e2, e3) =>
+      e1.eval(ctx) match
+        case VBool(true)  => e2.eval(ctx)
+        case VBool(false) => e3.eval(ctx)
+        case v            => throw TypeError("Expected Bool, got $v")
 
 enum Typ:
   case TCon(name: String, ts: Seq[Typ])
@@ -205,3 +252,30 @@ object Parser extends RegexParsers, PackratParsers:
   lazy val expr: PackratParser[Expr] =
     expr ~ atomexpr ^^ { case e1 ~ e2 => EApp(e1, e2) } | atomexpr
   lazy val program: PackratParser[Expr] = phrase(expr)
+
+final class TypeError(msg: String) extends Exception(msg)
+
+enum Value:
+  case VLam(var ctx: Map[String, Value], param: String, body: Expr)
+  case VNative(body: Value => Value)
+  case VInt(n: Int)
+  case VBool(b: Boolean)
+  case VUndef
+
+  def apply(that: Value) = this match
+    case VLam(ctx, param, body) => body.eval(ctx + (param -> that))
+    case VNative(body)          => body(that)
+    case _                      => throw TypeError(s"Expected applicable, got $this")
+
+  def updateCtx(k: String, v: Value): Value = this match
+    case v @ VLam(_, _, _) =>
+      v.ctx = v.ctx.updated(k, v)
+      v
+    case v => v
+
+  override def toString = this match
+    case VLam(_, _, _) => "[lambda]"
+    case VNative(_)    => "[native function]"
+    case VInt(n)       => s"$n"
+    case VBool(b)      => s"$b"
+    case VUndef        => "[undefined]"
