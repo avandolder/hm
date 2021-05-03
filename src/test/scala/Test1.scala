@@ -6,17 +6,18 @@ import Value.*
 
 class Test1:
   @Test def test_prettyPrintedTypes(): Unit =
+    val tupleTyp = TCon("()", Seq(TCon("B", Seq(boolCon ->: intCon)), boolCon))
     assertEquals(
       (
         TCon(
           "A",
           Seq(
-            TCon("B", Seq(boolCon)),
+            tupleTyp,
             intCon
           )
         ) ->: (intCon ->: TCon("B", Seq(intCon))) ->: boolCon
       ).pretty(),
-      "A (B Bool) Int -> (Int -> B Int) -> Bool"
+      "A (B (Bool -> Int), Bool) Int -> (Int -> B Int) -> Bool"
     )
 
   @Test def test_recursiveFactorial(): Unit =

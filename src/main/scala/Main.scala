@@ -13,7 +13,7 @@ import Value.*
     let id = \x. x in
     let t = id true in
     let ten = id 10 in
-    f id x z
+    (f id x z, 10)
   """
   val expr = Parser.parseAll(Parser.program, src) match
     case Parser.Success(matched, _) => matched
@@ -24,6 +24,7 @@ import Value.*
 
 val boolCon = TCon("Bool", Seq.empty)
 val intCon = TCon("Int", Seq.empty)
+// format: off
 val prelude = Map(
   "is_zero" -> VNative(intCon ->: boolCon, {
     case VInt(n) => VBool(n == 0)
@@ -41,6 +42,7 @@ val prelude = Map(
     case v => throw TypeError("Expected Int, got $v")
   })
 )
+// format: on
 
 enum Expr:
   case EBool(b: Boolean)
@@ -51,6 +53,7 @@ enum Expr:
   case ELet(v: String, e1: Expr, e2: Expr)
   case ERec(v: String, e1: Expr, e2: Expr)
   case EIf(e1: Expr, e2: Expr, e3: Expr)
+  case ETup(es: List[Expr])
 
   override def toString() = this match
     case EBool(b)        => b.toString
@@ -61,6 +64,7 @@ enum Expr:
     case ELet(v, e1, e2) => s"let $v = $e1 in $e2"
     case ERec(v, e1, e2) => s"rec $v = $e1 in $e2"
     case EIf(e1, e2, e3) => s"if $e1 then $e2 else $e3"
+    case ETup(es)        => es.mkString("(", ", ", ")")
 
   def typecheck: Typ =
     val infer = Infer()
@@ -72,6 +76,7 @@ enum Expr:
     case EInt(n)    => VInt(n)
     case EVar(v)    => ctx(v)
     case ELam(v, e) => VLam(ctx, v, e)
+    case ETup(es)   => VTup(es.map(_.eval(ctx)))
 
     case EApp(e1, e2) =>
       val v1 = e1.eval(ctx)
@@ -98,6 +103,7 @@ enum Typ:
 
   override def toString() = this match
     case TCon("->", Seq(t1, t2))       => s"($t1 -> $t2)"
+    case TCon("()", ts)                => ts.mkString("(", ", ", ")")
     case TCon(name, ts) if ts.nonEmpty => s"($name ${ts.mkString(" ")})"
     case TCon(name, _)                 => name
     case TVar(n) =>
@@ -110,6 +116,7 @@ enum Typ:
       s"$open${t1.pretty("(", ")")} -> ${t2.pretty()}$close"
     case TCon("->", ts) =>
       ts.map(_.pretty()).mkString(open, " -> ", close)
+    case TCon("()", ts) => ts.map(_.pretty()).mkString("(", ", ", ")")
     case TCon(name, ts) =>
       if ts.isEmpty then name
       else s"$open$name ${ts.map(_.pretty("(", ")")).mkString(" ")}$close"
@@ -189,6 +196,7 @@ final class Infer:
     case EBool(_) => boolCon
     case EInt(_)  => intCon
     case EVar(v)  => normalize(ctx(v))
+    case ETup(es) => TCon("()", es.map(typecheck(_, ctx)))
 
     case EApp(e1, e2) =>
       val tv = freshVar
@@ -240,6 +248,9 @@ object Parser extends RegexParsers, PackratParsers:
         ELam(id, e)
       }
       | id ^^ { EVar(_) }
+      | "(" ~> (expr <~ ",").+ ~ expr <~ ",".? <~ ")" ^^ { case es ~ e =>
+        ETup(es :+ e)
+      }
       | "(" ~> expr <~ ")"
   )
   lazy val expr: PackratParser[Expr] =
@@ -253,6 +264,7 @@ enum Value:
   case VNative(t: Typ, f: Value => Value)
   case VInt(n: Int)
   case VBool(b: Boolean)
+  case VTup(vs: List[Value])
 
   def apply(that: Value) = this match
     case VLam(ctx, param, body) => body.eval(ctx + (param -> that))
@@ -270,11 +282,13 @@ enum Value:
     case VNative(_, _) => "[native function]"
     case VInt(n)       => s"$n"
     case VBool(b)      => s"$b"
+    case VTup(vs)      => vs.mkString("(", ", ", ")")
 
   def getType: Typ = this match
     case VBool(_)      => boolCon
     case VInt(_)       => intCon
     case VNative(t, _) => t
+    case VTup(vs)      => TCon("()", vs.map(_.getType))
     case VLam(ctx, id, e) =>
       val infer = Infer()
       infer.typecheck(ELam(id, e), ctx.map(_ -> _.getType)).simplifyVars
