@@ -13,11 +13,11 @@ class Test1:
           "A",
           Seq(
             tupleTyp,
-            intCon
-          )
+            intCon,
+          ),
         ) ->: (intCon ->: TCon("B", Seq(intCon))) ->: boolCon
       ).pretty(),
-      "A (B (Bool -> Int), Bool) Int -> (Int -> B Int) -> Bool"
+      "A (B (Bool -> Int), Bool) Int -> (Int -> B Int) -> Bool",
     )
 
   @Test def test_recursiveFactorial(): Unit =

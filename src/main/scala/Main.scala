@@ -40,7 +40,7 @@ val prelude = Map(
         case v       => throw TypeError("Expected Int, got $v")
       })
     case v => throw TypeError("Expected Int, got $v")
-  })
+  }),
 )
 // format: on
 
